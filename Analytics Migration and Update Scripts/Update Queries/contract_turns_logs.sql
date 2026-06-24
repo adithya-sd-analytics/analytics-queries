@@ -3,7 +3,7 @@ WITH contract_base AS (
         c.id AS contract_id,
         c.created_by_workspace_id,
         contract_kind
-    FROM `{{project_id}}.{{prod_dataset_name}}.{{public}}contracts_v3_contractv3` c
+    FROM `spotdraft-prod.prod_india_db.public_contracts_v3_contractv3` c
 ),
 
 signals AS (
@@ -16,7 +16,7 @@ signals AS (
         'AUTO_SEND_TO_CP' AS reason,
         contract_kind,
         b.created_by_workspace_id as workspace_id
-    FROM `{{project_id}}.{{prod_dataset_name}}.cron_audit_table` a
+    FROM `spotdraft-prod.prod_india_db.cron_audit_table` a
     join contract_base as b on a.contract_id = b.contract_id
     WHERE a.audit_type IN ('send-to-counterparty', 'send-to-counterparty-v2')
 
@@ -30,7 +30,7 @@ signals AS (
         'EDITING_SESSION' AS reason,
         contract_kind,
         b.created_by_workspace_id 
-    FROM `{{project_id}}.{{prod_dataset_name}}.cron_audit_table` a
+    FROM `spotdraft-prod.prod_india_db.cron_audit_table` a
     join contract_base as b on a.contract_id = b.contract_id
     WHERE a.audit_type IN ('web-dav-edit-session-started', 'oo-native-edit-session-started', 'user-joined-wopi-session', 'web-dav-edit-session-ended', 'oo-native-edit-session-ended', 'wopi-edit-session-ended', 'stale-edit-session-ended')
     
@@ -47,7 +47,7 @@ signals AS (
         end AS reason,
         b.contract_kind,
         b.created_by_workspace_id 
-    FROM `{{project_id}}.{{prod_dataset_name}}.{{public}}contracts_v3_manualtaskdata` a
+    FROM `spotdraft-prod.prod_india_db.public_contracts_v3_manualtaskdata` a
     join contract_base as b on a.contract_id = b.contract_id
     WHERE a.type IN ('LEGAL_REVIEW', 'USER_EDIT', 'WOPI_EDIT_SESSION')
 
@@ -63,7 +63,7 @@ signals AS (
         'AUTO_CP_QUESTIONNAIRE_SUBMITTED' AS reason,
         cb.contract_kind,
         cb.created_by_workspace_id 
-    FROM `{{project_id}}.{{prod_dataset_name}}.cron_audit_table` a
+    FROM `spotdraft-prod.prod_india_db.cron_audit_table` a
     JOIN contract_base cb
       ON cb.contract_id = a.contract_id
     WHERE a.audit_type = 'questionnaire-submitted'
@@ -81,7 +81,7 @@ signals AS (
         'AUTO_CP_UPLOAD_VERSION' AS reason,
         cb.contract_kind,
         cb.created_by_workspace_id 
-    FROM `{{project_id}}.{{prod_dataset_name}}.cron_audit_table` a
+    FROM `spotdraft-prod.prod_india_db.cron_audit_table` a
     JOIN contract_base cb
       ON cb.contract_id = a.contract_id
     WHERE a.audit_type = 'ie-upload-contract-version'
@@ -103,7 +103,7 @@ signals AS (
         'MANUAL_OVERRIDE' AS reason,
         b.contract_kind,
         b.created_by_workspace_id 
-    FROM `{{project_id}}.{{prod_dataset_name}}.cron_audit_table` a
+    FROM `spotdraft-prod.prod_india_db.cron_audit_table` a
     join contract_base as b on a.contract_id = b.contract_id
     WHERE a.audit_type = 'pending-with-manual-override'
 ),

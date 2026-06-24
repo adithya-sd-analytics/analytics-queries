@@ -63,13 +63,13 @@ SCHEDULED_QUERIES: List[ScheduledQuerySpec] = [
     ScheduledQuerySpec(
         display_name="Auto Contract stages",
         template_file="contract_state_changes.sql",
-        dataset_id="{{dataset_name}}",
+        dataset_id="{{prod_dataset_name}}",
         destination_table="state_changes_table",
     ),
     ScheduledQuerySpec(
         display_name="Auto Contract turns",
         template_file="contract_turns_logs.sql",
-        dataset_id="{{dataset_name}}",
+        dataset_id="{{prod_dataset_name}}",
         destination_table="turn_logs_table",
     ),
     ScheduledQuerySpec(
@@ -108,6 +108,24 @@ SCHEDULED_QUERIES: List[ScheduledQuerySpec] = [
         template_file="contract_level_metrics.sql",
         dataset_id="{{dataset_name}}",
         destination_table="contract_level_metrics",
+    ),
+    ScheduledQuerySpec(
+        display_name="Auto On hold non workdays",
+        template_file="on_hold_non_workdays.sql",
+        dataset_id="{{prod_dataset_name}}",
+        destination_table="on_hold_non_work_days",
+    ),
+    ScheduledQuerySpec(
+        display_name="Auto Contract details",
+        template_file="contract_details.sql",
+        dataset_id="{{prod_dataset_name}}",
+        destination_table="Analytics_contract_details",
+    ),
+    ScheduledQuerySpec(
+        display_name="Auto Metadata parsing",
+        template_file="metadata_parsing.sql",
+        dataset_id="{{prod_dataset_name}}",
+        destination_table="parsed_contractkeypointer",
     ),
 ]
 
@@ -210,7 +228,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--templates-dir",
-        default=".",
+        default="Template Queries",
         help="Directory containing .sql template files.",
     )
     parser.add_argument(

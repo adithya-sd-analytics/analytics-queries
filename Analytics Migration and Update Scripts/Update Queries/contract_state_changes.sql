@@ -2,18 +2,18 @@ with
 redlining_entry as 
 (select contract_id, min(created) as redline_started from 
      (
-     select contract_id, a.created from `{{project_id}}.{{prod_dataset_name}}.cron_audit_table` as a 
-     join `{{project_id}}.{{prod_dataset_name}}.{{public}}contracts_v3_contractv3` as b on a.contract_id = b.id
+     select contract_id, a.created from `spotdraft-prod.prod_india_db.cron_audit_table` as a 
+     join `spotdraft-prod.prod_india_db.public_contracts_v3_contractv3` as b on a.contract_id = b.id
      where audit_type in ('send-to-counterparty-v2', 'send-to-counterparty')
      and contract_id is not null
      and contract_kind in ('TEMPLATE', 'TEMPLATE_EDITABLE', 'EXPRESS_TEMPLATE')
 
      union all 
-     select contract_id, created from `{{project_id}}.{{prod_dataset_name}}.{{public}}contracts_v3_contractversion`
+     select contract_id, created from `spotdraft-prod.prod_india_db.public_contracts_v3_contractversion`
      where action = 'BASE_EDITABLE'
      union all
-     select contract_id, a.created from `{{project_id}}.{{prod_dataset_name}}.cron_audit_table` as a 
-     join `{{project_id}}.{{prod_dataset_name}}.{{public}}contracts_v3_contractv3` as b on a.contract_id = b.id
+     select contract_id, a.created from `spotdraft-prod.prod_india_db.cron_audit_table` as a 
+     join `spotdraft-prod.prod_india_db.public_contracts_v3_contractv3` as b on a.contract_id = b.id
      where audit_type in ( 'contract-moved-to-redlining')
      and contract_id is not null
      -- and contract_kind not in ('UPLOAD_SIGN')
@@ -58,8 +58,8 @@ end as old_status_alt,
 -- split(on_hold, '~')[safe_offset(1)], split(on_hold, '~')[safe_offset(0)],
 a.contract_id, c.created as contract_created,
 a.created, created_by_workspace as workspace_id, b.redline_started, c.contract_kind, c.status, c.created_by_workspace_id
-from `{{project_id}}.{{prod_dataset_name}}.cron_audit_table` as a
-join `{{project_id}}.{{prod_dataset_name}}.{{public}}contracts_v3_contractv3` as c on a.contract_id =c.id
+from `spotdraft-prod.prod_india_db.cron_audit_table` as a
+join `spotdraft-prod.prod_india_db.public_contracts_v3_contractv3` as c on a.contract_id =c.id
 left join redlining_entry as b on a.contract_id = b.contract_id
 where audit_type = 'workflow-status-update'
 and a.contract_id is not null
@@ -70,8 +70,8 @@ order by contract_id desc, created
 template_editable_transition as
 (select distinct 'REDLINING' as new_status, cast(null as string), a.contract_id, c.created as contract_created, min(a.created) over(partition by a.contract_id) as created,
 a.created_by_workspace_id, b.redline_started, c.contract_kind, c.status, c.created_by_workspace_id
-from `{{project_id}}.{{prod_dataset_name}}.{{public}}contracts_v3_contractversion` as a
-join `{{project_id}}.{{prod_dataset_name}}.{{public}}contracts_v3_contractv3` as c on a.contract_id = c.id
+from `spotdraft-prod.prod_india_db.public_contracts_v3_contractversion` as a
+join `spotdraft-prod.prod_india_db.public_contracts_v3_contractv3` as c on a.contract_id = c.id
 left join redlining_entry as b on a.contract_id = b.contract_id
 where action = 'BASE_EDITABLE'
 ),
@@ -80,8 +80,8 @@ where action = 'BASE_EDITABLE'
 contract_voided as
 (select 'VOIDED' as new_status, cast(null as string) as old_status, a.contract_id, b.created as contract_created, a.created, a.created_by_workspace, c.redline_started,
 b.contract_kind, cast(null as string) as status, created_by_workspace_id
-from `{{project_id}}.{{prod_dataset_name}}.cron_audit_table` as a
-join `{{project_id}}.{{prod_dataset_name}}.{{public}}contracts_v3_contractv3` as b on a.contract_id = b.id
+from `spotdraft-prod.prod_india_db.cron_audit_table` as a
+join `spotdraft-prod.prod_india_db.public_contracts_v3_contractv3` as b on a.contract_id = b.id
 left join redlining_entry as c on a.contract_id = c.contract_id
 where audit_type = 'contract-voided'
 )
@@ -92,7 +92,7 @@ redlining_status as
 select 'REDLINING' as status, cast(null as string) as old_status, a.contract_id, b.created as contract_created, a.redline_started, 
 b.created_by_workspace_id, a.redline_started, b.contract_kind,  cast(null as string) as status, created_by_workspace_id
 from redlining_entry as a
-join `{{project_id}}.{{prod_dataset_name}}.{{public}}contracts_v3_contractv3` as b on a.contract_id = b.id
+join `spotdraft-prod.prod_india_db.public_contracts_v3_contractv3` as b on a.contract_id = b.id
 )
 ,
 
@@ -132,7 +132,7 @@ from
                when contract_kind in ('UPLOAD_EDITABLE', 'EXPRESS_TEMPLATE') then 'REDLINING'
           end as new_status 
           , null as previous_status, created as contract_created, contract_kind, 'CONTRACT_CREATED' reason, created_by_workspace_id 
-               from `{{project_id}}.{{prod_dataset_name}}.{{public}}contracts_v3_contractv3`
+               from `spotdraft-prod.prod_india_db.public_contracts_v3_contractv3`
                where contract_kind in ('TEMPLATE', 'TEMPLATE_EDITABLE', 'UPLOAD_EDITABLE', 'EXPRESS_TEMPLATE','UPLOAD_SIGN')
           )
      order by contract_id desc, created

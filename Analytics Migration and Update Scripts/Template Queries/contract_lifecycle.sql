@@ -291,7 +291,7 @@ integration as
 (select * from
 (select contract_id, external_metadata_id as external_integration_id, external_metadata ,
 json_extract_scalar(external_metadata, '$.integration_name') as integration_name, row_number() over(partition by contract_id order by id desc) as rn
-from `{{project_id}}.{{prod_dataset_name}}.{{public}}public_externalintegrationcontractdetail`
+from `{{project_id}}.{{prod_dataset_name}}.{{public}}{{public}}externalintegrationcontractdetail`
 where json_extract_scalar(external_metadata, '$.integration_name') is not null)
 where rn = 1),
 
@@ -319,5 +319,3 @@ left join integration as int on a.id = int.contract_id
 left join workflow_info as wi on a.id = wi.contract_id
 where (ae.upload_status = 'PROCESSED' or ae.upload_status is null)
 )
-
-

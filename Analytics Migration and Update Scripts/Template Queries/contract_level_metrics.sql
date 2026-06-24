@@ -28,7 +28,13 @@ all_con as (
 
 contract_stages as (
 
-select a.contract_id, ac.created as con_created, min(case when a.status = 'REDLINING' then a.created end) Redlining_starts, 
+select a.contract_id, ac.created as con_created, 
+case 
+when min(case when a.status = 'REDLINING' then a.created end) is not null and min(case when a.status = 'SIGN' then a.created end) is not null
+  then least(min(case when a.status = 'REDLINING' then a.created end), min(case when a.status = 'SIGN' then a.created end))
+else min(case when a.status = 'REDLINING' then a.created end)
+end as
+Redlining_starts, 
 max(case when ac.workflow_status in ('SIGN', 'COMPLETED', 'COMPLETING') and a.status = 'SIGN' then a.created end) sign_starts,
 ac.execution_date as executed_date,
 max(case when a.status = 'VOIDED' then a.created end) as contract_voided_on,
@@ -391,42 +397,104 @@ left join `{{project_id}}.{{prod_dataset_name}}.{{public}}sd_organizations_organ
 order by 2 desc),
 
 
-sign_app_data as (
-(select distinct a.id as required_id, 
-    concat(b.id,'_',a.id) as uniqueid,
-    b.created_by_id as sent_by_user_id, 
-    concat(d.first_name, ' ', d.last_name) as sent_by, 
-    a.contract_id, 
-    created_by_workspace,
-    b.req_order,
-    b.created as app_sent, 
-    b.next_request,
-    c.created as app_finished, a.org_user_id as approver, concat(e.first_name, ' ', e.last_name) as approved_by,
-    case 
-      when f.id != created_by_workspace then 'Signatory Approval - Counterparty' else 'Signatory Approval - Internal' 
-    end as cp_approv,
-    timestamp_diff(c.created, b.created, second ) as time_spent,
-    case 
-      when c.created is null then 1 else 0
-    end as pending
-      from `{{project_id}}.{{prod_dataset_name}}.{{public}}contracts_v3_signrecipient` as a
-      join
-      (select *, lead(created) over(partition by required_id order by created) as next_request, row_number() over(partition by required_id order by created desc) as req_order 
-        from `{{project_id}}.{{prod_dataset_name}}.cron_audit_table` 
-        where audit_type = 'recipient-approver-email-sent'
-      )as b
-    on a.id = b.required_id 
-      left join (select distinct created, recipient_id, is_success, is_rejected,  created_by_workspace_id
-      from `{{project_id}}.{{prod_dataset_name}}.{{public}}contracts_v3_recipientaction`
-      ) 
-      as c on a.id = c.recipient_id and b.created <= c.created and (b.next_request is null or (b.next_request > c.created)) 
-      join `{{project_id}}.{{prod_dataset_name}}.{{public}}sd_organizations_organizationuser` as d on b.created_by_id = d.user_id
-      join `{{project_id}}.{{prod_dataset_name}}.{{public}}sd_organizations_organizationuser` as e on a.org_user_id = e.id
-      join `{{project_id}}.{{prod_dataset_name}}.{{public}}sd_organizations_companyprofile` as f on f.owner_id = e.organization_id
-    where a.is_deleted = false
-    -- and b.created_by_id not in (select user_id from spotdraft_users)
-    )
+sign_reset as 
+(
+(select created,  null as recipient_id, 'Reset move to redlining' as action,contract_id, created_by_workspace_id  from `{{project_id}}.{{prod_dataset_name}}.state_changes_table`
+where status in ('REDLINING') and previous_status in ('SIGN')
+order by created)
+union all 
+(select distinct created, null as recepient_id, 'Reset reject sign or approval' as action, contract_id, created_by_workspace_id
+from `{{project_id}}.{{prod_dataset_name}}.{{public}}contracts_v3_recipientaction`
+where (is_success = false or is_rejected = true))
+union all 
+(select distinct created, null as recepient_id, 'Reset upload sign version' as action, contract_id, created_by_workspace_id
+from `{{project_id}}.{{prod_dataset_name}}.{{public}}contracts_v3_contractversion`
+where action = 'UPLOADED_EXECUTION_PDF' 
+and (json_extract_scalar(meta_data, '$.restored_version')='false' or json_extract_scalar(meta_data, '$.restored_version') is null)
+)
+
 ),
+
+sign_app_sent as
+(select * from
+  (select distinct a.*, min(b.created) over(partition by a.contract_id, a.required_id, a.created) as reset from 
+    (select created, required_id, 'sent' as action ,contract_id, created_by_workspace , created_by_id as sent_by_id,
+    lag(created) Over(partition by contract_id, required_id order by created) as prev_sent,
+    row_number() over(partition by contract_id, required_id order by created) as req_num  
+    from `{{project_id}}.{{prod_dataset_name}}.cron_audit_table` 
+    where audit_type in ('recipient-approver-email-sent','recipient-approver-email-resent' )
+    ) as a
+  left join sign_reset as b on a.contract_id = b.contract_id and b.created <= a.created and b.created >= a.prev_sent
+  -- where a.contract_id = 1877583
+  )
+where req_num = 1 or reset is not null 
+order by contract_id, required_id, req_num),
+
+
+sign_app_data as
+(select
+row_number() over() uuid, 
+required_id,
+concat(a.contract_id,'_',required_id,'_',app_order) as uniqueid, 
+sent_by_id as sent_by_user_id, b.user_name as sent_by, a.contract_id,
+workspace_id as created_by_workspace, 
+app_order as req_order,
+a.created as app_sent, next_timestamp as app_finished, 
+coalesce(next_timestamp, contract_voided_on, executed_date, current_timestamp) as app_finishied_current,
+c.org_user_id as approver,
+concat(d.first_name, ' ',d.last_name) as approved_by,
+
+case when next_action = 'sent' then 'Skipped' 
+when next_action is null and reset is not null then 'Skipped'
+when next_action is null and reset is null and coalesce(contract_voided_on, executed_date) is null then 'Pending'
+when next_action is null and reset is null and coalesce(contract_voided_on, executed_date) is not null then 'Force Completed'
+else next_action
+end as status,
+
+case 
+  when e.id != workspace_id then 'Signatory Approval - Counterparty' else 'Signatory Approval - Internal' 
+end as cp_approv,
+timestamp_diff(coalesce(next_timestamp, contract_voided_on, executed_date, current_timestamp), a.created, second) as old_time_spent,
+case when next_action is null and reset is null and coalesce(contract_voided_on, executed_date) is null then 1 else 0 end as pending
+ from
+(select a.*, contract_voided_on, executed_date,
+row_number() over(partition by a.contract_id, required_id order by created) as app_order, 
+row_number() over(partition by a.contract_id, required_id order by created desc) as app_rev_order 
+from
+  (select contract_id,created_by_workspace as workspace_id, required_id, action,  sent_by_id,
+  lead(action) over(partition by contract_id, required_id order by created) as next_action, 
+  created,
+  case 
+  when lead(action) over(partition by contract_id, required_id order by created) = 'sent' then reset
+  when lead(action) over(partition by contract_id, required_id order by created) is null then reset
+  else lead(created) over(partition by contract_id, required_id order by created) end as next_timestamp,
+  reset
+  from
+    (select *, 
+    case when action = 'sent' then 'keep'
+    when action != 'sent' and lead(action) over(partition by contract_id, required_id order by created) in ('Rejected', 'Approved') then 'drop'
+    when action != 'sent' and lag(action) over(partition by contract_id, required_id order by created) is null then 'drop'
+    else 'keep' end as approval_logic
+    from 
+    (
+      select created, required_id, action, contract_id, created_by_workspace, lead(reset) over(partition by contract_id, required_id order by created) as reset, sent_by_id from sign_app_sent 
+      union all 
+      (select distinct created, recipient_id, case when is_success = true then 'Approved' else 'Rejected' end as action, contract_id, created_by_workspace_id, cast(null as timestamp) as reset, null as sent_by_id
+      from `{{project_id}}.{{prod_dataset_name}}.{{public}}contracts_v3_recipientaction`)
+    )
+    -- where contract_id = 1877583
+
+    order by contract_id, required_id, created)
+  where approval_logic = 'keep'
+  order by contract_id desc, required_id, created)  as a
+  join contract_stages as b on a.contract_id = b.contract_id
+where action = 'sent') as a
+left join 
+(select * from (select concat(first_name,' ' ,last_name) as user_name, user_id, id, row_number() over(partition by user_id order by created desc) as rn
+ from `{{project_id}}.{{prod_dataset_name}}.{{public}}sd_organizations_organizationuser`)where rn = 1) as b on a.sent_by_id = b.user_id
+left join `{{project_id}}.{{prod_dataset_name}}.{{public}}contracts_v3_signrecipient` as c on a.required_id = c.id
+left join `{{project_id}}.{{prod_dataset_name}}.{{public}}sd_organizations_organizationuser` as d on c.org_user_id = d.id
+left join `{{project_id}}.{{prod_dataset_name}}.{{public}}sd_organizations_companyprofile` as e on d.organization_id = e.owner_id),
 
 v5_cleaned as 
 (select *, 
@@ -516,10 +584,13 @@ from v5_cleaned as a
 
 
 sign_app_events as
-(select concat('sign_app_',uniqueid) as uuid, contract_id, created_by_workspace as workspace_id,  concat(cp_approv, ' ',approved_by) as cat_1, approved_by as cat_2, case when app_finished is not null then 'Approved' else 'Pending' end as approval_status,
+(select concat('sign_app_',uniqueid) as uuid, contract_id, created_by_workspace as workspace_id,  concat(cp_approv, ' ',approved_by) as cat_1, 
+approved_by as cat_2, 
+status as approval_status,
  app_sent, app_finished, coalesce(app_finished, current_timestamp), timestamp_diff(app_finished, app_sent, second) as timespent
   from sign_app_data
-  ),
+  )
+  ,
 
 
 
@@ -806,7 +877,3 @@ union all
   from on_hold_tab as a 
   join `{{project_id}}.{{prod_dataset_name}}.{{public}}contracts_v3_contractv3` as b on a.contract_id = b.id)
 )
---redlining_26414_Client_1
-
-
-
